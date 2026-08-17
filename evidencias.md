@@ -1,4 +1,6 @@
-# Evidencias — TP1
+# Evidencias
+
+## TP1 — Git colaborativo
 
 ## 1. Push directo a main rechazado
 ![push rechazado](img/cap1.png)
@@ -20,6 +22,11 @@ Al abrir "Resolve conflicts" en el PR de la rama B, se muestran los marcadores d
 que delimitan el conflicto: `<<<<<<<` marca el inicio de la versión de mi rama actual,
 `=======` separa las dos versiones en disputa, y `>>>>>>>` marca el final de la versión
 que ya está en `main`. Resolver el conflicto implicó decidir qué contenido conservar y
+
+## 4. Release v1.0.0 publicada
+![release publicada](img/cap4.png)
+La release `v1.0.0` publicada en GitHub, generada a partir del tag creado sobre `main`,
+con las notas describiendo qué incluye esta primera versión estable del TP.
 
 ------------------------------------------------------------------------------------------
 
@@ -67,8 +74,3 @@ Después de `docker logout ghcr.io` (sesión cerrada) y de borrar las imágenes 
 ambas imágenes sin pedir credenciales — confirmando que quedaron publicadas con visibilidad pública
 en GitHub Container Registry.
 eliminar estos marcadores.
-
-## 4. Release v1.0.0 publicada
-![release publicada](img/cap4.png)
-La release `v1.0.0` publicada en GitHub, generada a partir del tag creado sobre `main`,
-con las notas describiendo qué incluye esta primera versión estable del TP.
