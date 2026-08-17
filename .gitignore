@@ -1,16 +1,25 @@
-# dependencias y artefactos de build
-node_modules/
-bin/
-obj/
-dist/
-build/
-
-# secretos: NUNCA se versionan
+# Variables de entorno (nunca subir credenciales)
 .env
-*.local
+!.env.example
 
-# basura del sistema operativo y del editor
-.DS_Store
-Thumbs.db
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Backend
+backend/bin/
+backend/tmp/
+backend/api
+backend/api.exe
+
+# Cobertura de tests
+coverage/
+
+# Editores
 .vscode/
 .idea/
+
+# Logs y archivos del sistema
+*.log
+.DS_Store
+Thumbs.db
