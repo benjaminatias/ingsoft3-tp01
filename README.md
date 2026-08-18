@@ -10,12 +10,6 @@ sesión para usar la aplicación.
 
 Los datos se cargan manualmente: no se utiliza ninguna API externa (TMDB, IMDb, OMDb).
 
-> **Nota sobre SPEC.md**: la especificación original excluía explícitamente la
-> autenticación, JWT y el registro de usuarios (§2), limitaba el modelo a dos entidades
-> (§7) y pedía verificar «No existe autenticación» (§64). El login se agregó después, a
-> pedido, y por lo tanto el proyecto ya no cumple esos tres puntos de SPEC.md. Todo lo
-> demás de la especificación se mantiene igual.
-
 ---
 
 ## Stack
@@ -56,6 +50,7 @@ PostgreSQL
 ├── .gitignore
 ├── .env.example
 ├── docker-compose.yml
+├── docker-compose.registry.yml
 │
 ├── backend/
 │   ├── cmd/api/main.go
@@ -66,12 +61,14 @@ PostgreSQL
 │   │   ├── handlers/{handlers.go,auth.go,peliculas.go,generos.go,estadisticas.go,health.go}
 │   │   └── validation/validation.go
 │   ├── tests/
-│   └── Dockerfile
+│   ├── Dockerfile
+│   └── .dockerignore
 │
 └── frontend/
     ├── src/{api,components,utils,App.jsx,main.jsx,styles.css}
     ├── tests/
     ├── Dockerfile
+    ├── .dockerignore
     └── nginx.conf
 ```
 
@@ -125,6 +122,29 @@ Detener los servicios y borrar los datos (volumen `db_data`):
 ```bash
 docker compose down -v
 ```
+
+---
+
+## Ejecución desde el registry (sin el código fuente)
+
+Las imágenes de backend y frontend están publicadas y son públicas en GitHub Container Registry:
+
+- `ghcr.io/benjaminatias/gestor-peliculas-backend:v0.1.0`
+- `ghcr.io/benjaminatias/gestor-peliculas-frontend:v0.1.0`
+
+Para levantar el sistema completo **sin clonar ni construir nada**, alcanza con el archivo
+`docker-compose.registry.yml` y el `.env`:
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.registry.yml up -d
+```
+
+Este compose es idéntico al anterior, salvo que `backend` y `frontend` usan `image:` en vez de
+`build:` — Docker descarga las imágenes ya compiladas del registry en lugar de construirlas a
+partir del código. Es la misma verificación que se le pediría a un pipeline de CI/CD o a un entorno
+de QA/PROD: que el sistema funcione a partir de artefactos publicados, no de una copia local del
+código fuente.
 
 ---
 
