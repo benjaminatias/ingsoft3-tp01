@@ -116,3 +116,55 @@ Usé IA (Claude) de forma intensiva durante el desarrollo de este proyecto:
   persistencia, red de servicios) porque lo trabajé paso a paso. Las partes de autenticación (JWT,
   bcrypt) y algunos detalles del backend en Go todavía los estoy repasando para poder explicarlos con
   seguridad en la defensa oral.
+  
+  ## TP3 — Planificación y trazabilidad
+
+### 1. Duración del sprint
+
+Elegí un sprint de **2 semanas**. Es una duración estándar en la industria: da margen suficiente
+para completar una historia con sus tareas sin la presión de un sprint de 1 semana (que en un
+proyecto individual, con tiempo limitado entre clases y otras materias, sería demasiado ajustado),
+pero sigue siendo lo bastante corto como para poder ajustar el rumbo rápido si algo no está
+funcionando, en vez de esperar un mes entero para replanificar.
+
+### 2. Límite de trabajo en progreso
+
+Elegí un límite de **2** en la columna *In Progress*. Trabajando individualmente, la guía sugiere
+"cantidad de personas + 1" — en mi caso, 1 + 1 = 2. El "+1" me deja una válvula para cuando algo
+queda esperando (por ejemplo, una tarea bloqueada por una duda o una revisión) y necesito poder
+avanzar en otra cosa sin quedarme frenado. Pasarme de ese número haría que el límite deje de
+cumplir su función: evitar que tenga muchas cosas a medio hacer al mismo tiempo, en vez de terminar
+una por una.
+
+### 3. Diagnóstico de la historia mal escrita
+
+La historia de ejemplo: *"Como desarrollador quiero crear la tabla usuarios para guardar los
+datos."*
+
+**Por qué está mal escrita:** es una tarea técnica disfrazada de historia de usuario. Nadie —ni un
+cliente ni un usuario final— "quiere" que exista una tabla en la base de datos; eso es un medio,
+no un fin que le aporte valor a alguien. El "para guardar los datos" no es un beneficio real, es
+casi una repetición circular del "qué". Además, no tiene criterios de aceptación, así que no hay
+forma de verificar cuándo está "hecha".
+
+**Cómo la reescribiría:** separando el beneficio real del paso técnico. Por ejemplo: *"Como usuario
+quiero registrarme con mi email y contraseña para poder guardar mis películas favoritas de forma
+personal"* como historia, y "crear la tabla `usuarios`" pasa a ser una de sus tareas técnicas, no
+la historia en sí.
+
+### 4. Problemas encontrados y cómo los resolví
+
+- **`gh auth status` mostró que no estaba logueado con la GitHub CLI**, a pesar de que ya venía
+  usando Git normalmente en los TPs anteriores. Se resolvió con `gh auth login`, autenticando por
+  navegador con el código de 8 caracteres que la CLI generó — la autenticación de `gh` es
+  independiente de la de Git/GitHub en el navegador, algo que no tenía claro antes de este TP.
+
+### 5. Declaración de uso de IA
+
+Usé IA (Claude) para guiarme paso a paso durante todo el TP3: crear el Project con la
+configuración correcta (auto-import, visibilidad pública), las etiquetas y los issues por
+terminal, vincular la jerarquía con sub-issues, configurar el sprint y el límite de WIP, y armar
+el Pull Request con `Closes #16` para probar la trazabilidad. Entendí el proceso a medida que lo
+hacía —no fue copiar y pegar sin más—: verifiqué cada paso en la web de GitHub antes de seguir al
+siguiente (por ejemplo, confirmando visualmente que la jerarquía quedó bien anidada, que el issue
+se cerró solo al mergear el PR, y que el tablero se movió sin intervención manual).
