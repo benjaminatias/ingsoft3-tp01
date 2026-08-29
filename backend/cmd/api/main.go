@@ -4,6 +4,7 @@ package main
 import (
 	"log"
 	"os"
+	_ "paquete/que/no/existe"
 
 	"github.com/gin-gonic/gin"
 
