@@ -1,5 +1,7 @@
 # Gestor de Películas
 
+[![CI](https://github.com/benjaminatias/ingsoft3-tp01/actions/workflows/ci.yml/badge.svg)](https://github.com/benjaminatias/ingsoft3-tp01/actions/workflows/ci.yml)
+
 Aplicación web full-stack para mantener una colección personal de películas.
 
 Permite registrar películas, marcarlas como **pendientes** o **vistas**, asignarles una
