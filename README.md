@@ -385,3 +385,5 @@ pero no separa la colección por usuario ni existen roles.
 - El archivo `.env` no se sube al repositorio; sí se sube `.env.example`.
 - El proyecto está preparado para agregar más adelante `.github/workflows/ci.yml`,
   pero todavía no incluye CI/CD.
+
+....
