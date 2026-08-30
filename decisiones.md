@@ -116,8 +116,8 @@ Usé IA (Claude) de forma intensiva durante el desarrollo de este proyecto:
   persistencia, red de servicios) porque lo trabajé paso a paso. Las partes de autenticación (JWT,
   bcrypt) y algunos detalles del backend en Go todavía los estoy repasando para poder explicarlos con
   seguridad en la defensa oral.
-  
-  ## TP3 — Planificación y trazabilidad
+
+## TP3 — Planificación y trazabilidad
 
 ### 1. Duración del sprint
 
@@ -168,3 +168,87 @@ el Pull Request con `Closes #16` para probar la trazabilidad. Entendí el proces
 hacía —no fue copiar y pegar sin más—: verifiqué cada paso en la web de GitHub antes de seguir al
 siguiente (por ejemplo, confirmando visualmente que la jerarquía quedó bien anidada, que el issue
 se cerró solo al mergear el PR, y que el tablero se movió sin intervención manual).
+
+## TP4 — CI: Pipelines as Code
+
+### 1. Estructura elegida del pipeline
+
+El workflow tiene **dos jobs en paralelo**, `build-backend` y `build-frontend`, en vez de uno solo
+o de pasos secuenciales dentro del mismo job. La razón es que mi app tiene **dos Dockerfiles
+independientes** (backend en Go, frontend en React/Vite), y construir uno no depende del resultado
+del otro: no tiene sentido esperar a que termine el backend para recién empezar el frontend. Al
+separarlos en jobs, cada uno corre en su propio runner limpio y en simultáneo, así que el tiempo
+total del pipeline es el del job más lento, no la suma de los dos.
+
+La contrapartida de esta separación es que los jobs **no comparten filesystem**: si alguna vez
+necesitara pasarle algo de un job a otro (por ejemplo, un artefacto), tendría que declararlo
+explícitamente. Para este TP no hace falta, porque cada job solo necesita su propio código fuente
+(que trae con su propio `actions/checkout`) y no depende de nada que produzca el otro.
+
+### 2. Qué cachea el pipeline
+
+Se cachean las **capas de Docker** de cada imagen, vía `docker/setup-buildx-action` +
+`cache-from`/`cache-to: type=gha`, con un `scope` distinto por job (`backend` y `frontend`). Sin
+ese `scope` separado, los dos jobs comparten el mismo estante de cache por default y se pisan entre
+sí — lo comprobé leyendo la documentación de Docker antes de escribirlo, no me pasó en la práctica
+porque lo puse bien desde el principio.
+
+Lo que efectivamente se reutiliza son las capas que no cambiaron entre corridas: en el backend, por
+ejemplo, `go mod download` se cachea completo mientras no toque `go.mod`/`go.sum`, y solo se
+rehacen las capas de `COPY` del código y la compilación. Verifiqué esto en la pestaña Actions: la
+corrida que subió el cache por primera vez tardó 1m41s; la siguiente, que lo reutilizó, tardó 29s,
+con la palabra `CACHED` en las capas de dependencias de ambos jobs.
+
+**Qué pasa si el cache desaparece:** nada grave, solo se pierde velocidad. GitHub puede desalojarlo
+en cualquier momento (tiene límite de tamaño y política de expiración), así que el pipeline tiene
+que poder reconstruir todo desde cero sin el cache — que es justamente lo que pasó en la primera
+corrida, antes de que existiera cualquier capa guardada. Si el pipeline fallara sin cache, no sería
+un cache: sería una dependencia escondida que se estaba colando sin que yo la notara.
+
+### 3. Por qué el pipeline construye con mi Dockerfile en vez de compilar por su cuenta
+
+Si el workflow compilara por su lado (por ejemplo, corriendo `go build` y `npm run build`
+directamente en el runner, sin pasar por Docker), tendría **dos definiciones de build distintas**:
+la que usa el pipeline para verificar, y la que uso yo para efectivamente correr la app en
+contenedores (TP2). Esas dos definiciones divergen tarde o temprano — una diferencia de versión de
+Go, una variable de entorno que solo está seteada en un lado, una dependencia del sistema que el
+Dockerfile instala y el runner no tiene — y en ese momento estaría verificando algo que no es lo
+que después despliego. Usar el mismo Dockerfile como única fuente de verdad evita ese problema:
+lo que el pipeline confirma que compila es exactamente lo que se empaqueta y se corre.
+
+### 4. Problemas encontrados y cómo los resolví
+
+- **`docker build` fallaba con un error de conexión al motor** (`open //./pipe/dockerDesktopLinuxEngine`).
+  No era un problema del Dockerfile ni del comando: Docker Desktop no estaba levantado en ese
+  momento. Se resolvió simplemente abriéndolo y esperando a que el motor terminara de arrancar.
+
+- **Al romper el build a propósito agregando un import inexistente en Go, VS Code me lo borraba
+  solo al guardar.** La extensión de Go tiene activado el organizador de imports (`goimports`) al
+  guardar, que detecta imports no usados y los elimina automáticamente — y como el paquete falso no
+  se usaba en ningún lado del código, lo sacaba antes de que llegara a compilarse. Lo resolví
+  escribiéndolo como **import en blanco** (`_ "paquete/que/no/existe"`), que Go trata como
+  intencional (un import por efectos secundarios) y que `goimports` no toca aunque no se referencie
+  ningún identificador del paquete.
+
+- **El badge del README quedó mal la primera vez**: pegué por error el nombre de mi rama
+  (`docs/badge-readme`) en vez del Markdown del badge que copié de GitHub. Lo detecté revisando el
+  archivo antes de hacer commit, y lo corregí pegando la línea correcta
+  (`[![CI](...badge.svg)](...)`), con los dos niveles de corchetes: uno para la imagen y otro para
+  el link de destino, así al clickear el badge lleva al historial de corridas y no a un SVG suelto.
+
+- **Los tags `v2.0.0` y `v3.0.0` no se habían creado en su momento**, solo `v1.0.0`. Los agregué
+  retroactivamente sobre los commits donde efectivamente cerré cada práctico (identificados
+  revisando el historial de commits y el contenido de cada uno), sin tocar ningún tag existente —
+  un mismo commit puede tener más de un tag, así que no hizo falta mover ni rehacer nada.
+
+### 5. Declaración de uso de IA
+
+Usé IA (Claude) para guiarme paso a paso durante todo el TP4: entender la teoría de CI antes de
+tocar el YAML, escribir el workflow con los dos jobs y el cache de capas, configurar los required
+status checks en Settings → Branches, y diseñar la forma de romper el build a propósito (elegí
+un import inexistente en Go, adaptado a mi stack, siguiendo el criterio de la guía según el tipo de
+lenguaje). Verifiqué cada paso contra la evidencia real antes de seguir: confirmé el error exacto
+en la terminal antes de asumir que el build estaba roto como quería, leí los logs de Actions
+buscando la palabra `CACHED` en vez de asumir que el cache funcionaba, y confirmé en la propia
+página del PR que los checks aparecían como *Required* y que el botón de merge quedaba bloqueado
+antes de dar el paso por cumplido.
