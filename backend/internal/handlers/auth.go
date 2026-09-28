@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 
 	"gestor-peliculas/internal/auth"
 	"gestor-peliculas/internal/models"
@@ -55,12 +54,12 @@ func (h *Handler) Registro(c *gin.Context) {
 		return
 	}
 
-	var cantidad int64
-	if err := h.DB.Model(&models.Usuario{}).Where("email = ?", email).Count(&cantidad).Error; err != nil {
+	existe, err := h.Usuarios.ExisteEmail(email)
+	if err != nil {
 		responderError(c, http.StatusInternalServerError, "No se pudo crear la cuenta.")
 		return
 	}
-	if cantidad > 0 {
+	if existe {
 		responderError(c, http.StatusConflict, "Ya existe una cuenta con ese email.")
 		return
 	}
@@ -72,7 +71,7 @@ func (h *Handler) Registro(c *gin.Context) {
 	}
 
 	usuario := models.Usuario{Nombre: nombre, Email: email, PasswordHash: hash}
-	if err := h.DB.Create(&usuario).Error; err != nil {
+	if err := h.Usuarios.Crear(&usuario); err != nil {
 		responderError(c, http.StatusInternalServerError, "No se pudo crear la cuenta.")
 		return
 	}
@@ -98,9 +97,8 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	var usuario models.Usuario
-	err := h.DB.Where("email = ?", email).First(&usuario).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	usuario, err := h.Usuarios.BuscarPorEmail(email)
+	if errors.Is(err, ErrUsuarioNoEncontrado) {
 		// Se compara igualmente contra un hash descartable para que el tiempo de
 		// respuesta no revele si el email existe.
 		auth.EquilibrarTiempo()
@@ -129,9 +127,8 @@ func (h *Handler) Perfil(c *gin.Context) {
 		return
 	}
 
-	var usuario models.Usuario
-	err := h.DB.First(&usuario, usuarioID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	usuario, err := h.Usuarios.BuscarPorID(usuarioID)
+	if errors.Is(err, ErrUsuarioNoEncontrado) {
 		responderError(c, http.StatusUnauthorized, "La cuenta ya no existe.")
 		return
 	}
