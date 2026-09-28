@@ -10,14 +10,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// Handler agrupa las dependencias de los handlers. Solamente necesita la base de datos.
+// Handler agrupa las dependencias de los handlers.
+// Las películas y los géneros usan la base directamente; las cuentas pasan por
+// RepositorioUsuarios para poder probarlas con un doble.
 type Handler struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Usuarios RepositorioUsuarios
 }
 
 // Nuevo crea un Handler con la conexión indicada.
 func Nuevo(db *gorm.DB) *Handler {
-	return &Handler{DB: db}
+	return &Handler{DB: db, Usuarios: usuariosGorm{db: db}}
+}
+
+// NuevoConUsuarios crea un Handler con un repositorio de usuarios a medida (tests).
+func NuevoConUsuarios(db *gorm.DB, usuarios RepositorioUsuarios) *Handler {
+	return &Handler{DB: db, Usuarios: usuarios}
 }
 
 // responderError devuelve un error con una estructura simple y consistente.
@@ -73,8 +81,13 @@ func RegistrarRutas(router *gin.Engine, h *Handler) {
 
 // NuevoRouter crea el router completo de la aplicación.
 func NuevoRouter(db *gorm.DB) *gin.Engine {
+	return NuevoRouterCon(Nuevo(db))
+}
+
+// NuevoRouterCon crea el router a partir de un Handler ya armado.
+func NuevoRouterCon(h *Handler) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
-	RegistrarRutas(router, Nuevo(db))
+	RegistrarRutas(router, h)
 	return router
 }

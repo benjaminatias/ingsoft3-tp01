@@ -10,7 +10,7 @@ puntuación, administrar los géneros, filtrar la colección y consultar estadí
 El acceso está protegido con **autenticación JWT**: hay que crear una cuenta o iniciar
 sesión para usar la aplicación.
 
-Los datos se cargan manualmente: no se utiliza ninguna API externa (TMDB, IMDb, OMDb).
+Los datos se cargan manualmente: no se utiliza ninguna API externa (TMDB, IMDb, OMDb)...
 
 ---
 
