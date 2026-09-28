@@ -252,3 +252,172 @@ en la terminal antes de asumir que el build estaba roto como quería, leí los l
 buscando la palabra `CACHED` en vez de asumir que el cache funcionaba, y confirmé en la propia
 página del PR que los checks aparecían como *Required* y que el botón de merge quedaba bloqueado
 antes de dar el paso por cumplido.
+
+## TP5 — Calidad automatizada: tests, coverage y el umbral que frena un merge
+
+### 1. Qué lógica elegí testear y por qué esa
+
+Elegí testear donde un bug me dolería más en mi app de películas. Primero la **validación de
+películas**: la regla más delicada es la puntuación según el estado, porque una película pendiente
+no puede tener puntuación y una vista tiene que tenerla entre 1 y 10 con un solo decimal. Si esa
+regla se rompe, la base se llena de datos inconsistentes y después no hay forma fácil de
+arreglarlos. Segundo, las **cuentas y la autenticación** (bcrypt, JWT, email repetido), donde un
+bug es un problema de seguridad y no de estética. Tercero, los **géneros**: que no se pueda borrar
+uno que tiene películas asociadas y que no haya dos con el mismo nombre aunque cambien las
+mayúsculas. Y en el frontend, el **cliente de la API** (`api.js`), porque es el único lugar que
+decide qué hacer cuando el token vence: un 401 con sesión abierta cierra la sesión, pero un 401 en
+el login no.
+
+### 2. Las técnicas de test y las herramientas que usé
+
+Mi stack es Go + vitest, no .NET, así que averigüé qué usar para cada cosa que pide la consigna:
+
+- **Test parametrizado:** en Go, *table-driven tests* con `t.Run` (por ejemplo
+  `TestRegistroYLoginInvalidos` y `TestIntegracionGenerosErrores`, donde cada fila es una regla
+  distinta). En el frontend, `it.each` sobre los status 400, 404, 409 y 500 en `api.test.js`.
+- **Caso de error:** en el backend, un login de una cuenta inexistente devuelve 401 sin token, y si
+  el repositorio falla devuelve 500 y no 401, porque no es culpa del usuario. En el frontend, la
+  falla de conexión y el 401 con y sin token.
+- **Que la dependencia entre desde afuera:** una interfaz (`RepositorioUsuarios`) que el `Handler`
+  recibe como campo, explicada en el punto 3.
+- **Fabricar el doble:** un struct hecho a mano (`repoFalso`) que implementa la interfaz, sin
+  librerías de mocks. En el frontend, `vi.fn()` en lugar de `fetch`.
+- **Medir la cobertura:** `go test -coverprofile` con `-coverpkg=./internal/...` en el backend, y
+  `vitest run --coverage` (motor v8) en el frontend.
+- **Un umbral que rompe el build:** en el frontend, `coverage.thresholds` de vitest. En Go no
+  existe una bandera para eso, así que lo resolví con un script (`backend/scripts/cobertura.sh`)
+  que lee el total de `go tool cover` y termina con error si está por debajo del número.
+- **Qué entra en la cuenta:** el `-coverpkg` en Go y el `include` de vitest (punto 4).
+- **Que las herramientas entren a la etapa de tests del Dockerfile:** la etapa `test` copia
+  `tests/` y el script (en Go no hay dependencias de desarrollo aparte), y en el frontend le saqué
+  `tests` al `.dockerignore`, que si no los dejaba afuera.
+
+Como sin base de datos los tests de integración se omiten y la cobertura queda muy baja (46,9 %),
+el job `build-backend` levanta un PostgreSQL descartable como servicio y los tests corren con
+`--network host`. Todo esto entró en el PR del pipeline:
+https://github.com/benjaminatias/ingsoft3-tp01/pull/28
+
+### 3. El refactor para poder mockear
+
+Antes, los handlers de `Registro`, `Login` y `Perfil` hablaban directo con `*gorm.DB`, o sea que
+**no podía ejecutar un handler de cuentas sin tener PostgreSQL corriendo**: no había dónde meter un
+doble. Lo que cambié fue agregar la interfaz `RepositorioUsuarios` (`ExisteEmail`, `Crear`,
+`BuscarPorEmail`, `BuscarPorID`) con una implementación real sobre GORM, y hacer que el `Handler`
+la reciba como campo. `Nuevo(db)` la arma con GORM, así que el resto de la app no cambió. Además
+el repositorio devuelve un error propio (`ErrUsuarioNoEncontrado`) para que los handlers no
+dependan del error interno de GORM.
+
+Mi test `TestRegistroConEmailExistenteDevuelve409YNoCrea` **reemplaza la dependencia con la base de
+datos** por `repoFalso`, y el assert verifica dos cosas: que la respuesta sea 409 y que `Crear`
+nunca se haya llamado. Eso último es lo que un mock permite y un stub no: el stub solo devuelve
+respuestas armadas, el mock además registra cómo lo llamaron para que el test lo compruebe. Si
+invierto la regla del `if` en `Registro`, ese test se pone en rojo.
+
+### 4. Mi umbral de coverage y qué dejé afuera de la cuenta
+
+En el **backend** puse **70 % de sentencias**, y hoy da **77,3 %**. Go no tiene métrica de ramas,
+solo sentencias, así que no puedo reportar el número de rama de ese lado. En el **frontend** puse
+**80 % de líneas y 85 % de ramas**: medí 82,4 % y 87,0 %, y dejé unos 2 puntos de margen, chico a
+propósito para frenar una caída real sin fallar por ruido. Puse umbral en las dos métricas porque
+con vitest 2.1.9 una función que nadie llama suma líneas sin cubrir pero casi no mueve las ramas
+(en mi demostración las ramas quedaron en 86,4 %, arriba del umbral, y frenó por líneas). Hoy el
+frontend está en 84,7 % de líneas y 89,3 % de ramas, con los tests de `recomendaciones.js`.
+
+Con el 70 % me pasó algo que vale la pena contar: lo elegí mirando mi medición local (74,4 %),
+pero la primera corrida limpia en GitHub dio **69,9 %** y el paso se puso rojo por una décima.
+Podía bajar el umbral a 65, pero eso era ajustar el número al código. Preferí escribir los tests
+que faltaban: el punto más flojo era `generos.go` (33 %), así que agregué tests de integración de
+géneros (ciclo completo, errores, duplicados y que no se borre uno con películas). Subió a 78,9 %
+y el total quedó con más de 7 puntos de margen. Para subir el umbral haría falta testear
+`peliculas.go` (66,7 %) y `estadisticas.go` (55,6 %) en el backend, y en el frontend las
+funciones CRUD de `api.js` (70,6 % de líneas y solo 36 % de funciones). Si mañana lo subo 10
+puntos, el backend fallaría hoy.
+
+Sobre línea contra rama: la de línea puede mentir más, porque un `if` en una sola línea cuenta
+como cubierto aunque solo se recorra uno de sus dos caminos. La de rama exige recorrer los dos.
+
+**Qué dejé afuera de la cuenta.** En el backend, `cmd/api` (el arranque, `main.go`), que queda
+fuera por estar fuera de `internal/`, y los modelos, que son structs sin sentencias ejecutables.
+`database.go` sí cuenta (73,3 %) porque lo ejercitan los tests de integración. En el frontend mido
+solamente `src/utils` y `src/api`: los componentes React, `App.jsx` y `main.jsx` quedan afuera
+porque son UI y necesitan tests con DOM, que este TP no pide. Lo armé como lista de lo que
+**incluyo**, así un archivo nuevo en esas carpetas entra a la cuenta solo aunque nadie lo pruebe
+(es justo lo que usé en la demostración).
+
+Pruebas: la corrida verde de `main` con el resumen de cobertura del backend (77,3 %) y el reporte
+descargable:
+https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/36480097250
+Y la primera corrida roja del backend por umbral (69,9 % contra 70 %):
+https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/36478044700
+
+### 5. Por qué coverage alto no garantiza calidad
+
+La cobertura mide qué líneas **se ejecutaron**, no si alguien **verificó** algo. Con mi propio
+código: si escribo un test que llame a `nivelDePuntuacion(9)` sin ningún `expect`, esa línea sube
+la cobertura igual y no comprueba nada. Un 77 % no quiere decir que el 77 % de mi código está
+verificado, quiere decir que esas sentencias corrieron durante los tests. Para comprobar que mis
+tests sí verifican, se hicieron pruebas de mutación a mano (con ayuda de Claude, en una copia del
+código): se invirtió una regla, por ejemplo `if existe` por `if !existe` en el registro o `>= 9`
+por `> 9`, y en ambos casos algún test se puso en rojo.
+
+### 6. El Pull Request bloqueado
+
+Agregué `frontend/src/utils/recomendaciones.js` (tres funciones con varios caminos) **sin ningún
+test**. Compilaba perfecto y los 54 tests seguían en verde, pero el check `build-frontend` se puso
+rojo en la métrica **líneas**: `ERROR: Coverage for lines (71.67%) does not meet global threshold
+(80%)`. Las 54 sentencias nuevas sin cubrir bajaron el total del 82,4 % al 71,7 %. Para
+arreglarlo escribí `recomendaciones.test.js`, con un test por cada camino que las funciones
+declaran (27 casos entre `it.each` y tests sueltos), el check pasó a verde (84,7 %) y mergeé.
+
+Este freno es distinto del del TP4: aquel frena cuando el código **no compila**, este frena cuando
+compila y pasa todo, por un criterio de calidad que fijé yo. Y lo que deja pasar igual son los
+tests que ejecutan el código sin verificarlo, los errores de lógica que ningún test contempla y
+todo lo de la interfaz, porque los componentes no entran a la cuenta.
+
+Hice **dos Pull Requests a propósito**: el primero cuenta la historia (rojo, tests, verde, merge)
+y el segundo queda **abierto y en rojo hasta la defensa**, con el mismo problema sin arreglar,
+para poder comprobar el freno sin depender de una captura.
+- PR 1, el mergeado, con la secuencia completa: https://github.com/benjaminatias/ingsoft3-tp01/pull/29
+- Corrida roja por umbral de ese PR, con el número en el log:
+  https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/36481374573
+- PR 2, el freno vigente (abierto y en rojo): https://github.com/benjaminatias/ingsoft3-tp01/pull/30
+
+### 7. El ejercicio del camino sin cubrir
+
+- **Qué línea es:** `frontend/src/utils/formato.js`, el `return '-'` de `formatearPuntuacion`
+  cuando `Number.isNaN(numero)` (línea 19). Algo parecido pasa en `formatearDecimal`, donde el
+  `return '-'` de la línea 6 tampoco lo recorre ningún test.
+- **Qué entrada la recorrería:** un valor concreto, `'abc'`: `formatearPuntuacion('abc')` entraría a
+  ese camino y devolvería `'-'`.
+- **Qué decidí hacer: no lo agregué.** Revisé el código y la aplicación solo llama a
+  `formatearPuntuacion` con `pelicula.puntuacion` (en `PeliculaItem.jsx`), que la API siempre manda
+  como número o `null`, y el `null` y el vacío ya se resuelven en el `if` de arriba. Ese camino es
+  defensa extra frente a un dato que el backend no manda, por eso lo dejé sin test.
+
+### 8. Problemas encontrados y cómo los resolví
+
+- **El umbral del backend falló en la primera corrida (69,9 % contra 70 %)** aunque en mi máquina
+  daba 74,4 %, porque la corrida limpia de GitHub mide distinto. Lo resolví agregando tests de
+  géneros (punto 4) en vez de bajar el número.
+
+- **Conflicto en `frontend/package.json`** al abrir el PR del pipeline: mi rama había salido de un
+  `main` que todavía no tenía el PR anterior del frontend, y los dos tocaban las mismas líneas de
+  los scripts. Lo resolví en el editor web de GitHub dejando la versión que tenía las dos cosas.
+
+- **El `git push` fue rechazado** después de resolver ese conflicto desde la web, porque GitHub
+  había agregado un commit de merge que yo no tenía. Lo resolví con `git pull` y volví a pushear.
+
+- **Saltos de línea en Windows:** Git convierte LF a CRLF y eso puede romper un script `.sh` dentro
+  del contenedor Linux. Agregué un `.gitattributes` que fuerza LF en los `.sh`.
+
+### 9. Declaración de uso de IA
+
+Usé IA (Claude) para todo el TP5: el refactor de `RepositorioUsuarios`, los tests con mock del
+backend, los tests de integración de géneros, los tests del frontend (`api.test.js` y
+`recomendaciones.test.js`), la etapa de tests de los dos Dockerfiles, el script `cobertura.sh` con
+el umbral, los cambios del `ci.yml` y el código sin tests de la demostración del freno. Lo verifiqué
+así: corrí `go test ./...` y `npm run test:coverage` en mi máquina, revisé las corridas en Actions
+para ver el resumen de cobertura y los artefactos, y comprobé en los Pull Requests que los checks
+aparecieran como *Required* con el merge bloqueado cuando correspondía. Además, Claude comprobó
+que los tests detectan cambios invirtiendo reglas en una copia del código (un test se puso en rojo
+en cada caso). El caso que **no** está cubierto es el del punto 7.
