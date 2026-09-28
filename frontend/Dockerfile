@@ -11,7 +11,13 @@ COPY src ./src
 
 RUN npm run build
 
-# Etapa 2: Nginx sirve los archivos compilados
+# Etapa 2: tests (parte del build: ya tiene Node y las dependencias de desarrollo).
+# Va en el medio: la última etapa del archivo tiene que seguir siendo nginx.
+FROM build AS test
+COPY tests ./tests
+ENTRYPOINT ["npm", "run", "test:ci"]
+
+# Etapa 3: Nginx sirve los archivos compilados
 FROM nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
