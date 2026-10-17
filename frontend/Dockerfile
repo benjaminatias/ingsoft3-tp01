@@ -20,8 +20,14 @@ ENTRYPOINT ["npm", "run", "test:ci"]
 # Etapa 3: Nginx sirve los archivos compilados
 FROM nginx:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# La plantilla va en templates/ (no en conf.d/): al arrancar, la imagen de nginx reemplaza
+# ${BACKEND_URL} y ${DNS_RESOLVER} por los valores del entorno. Los valores por defecto son
+# los de Docker Compose, así que `docker compose up` sigue andando sin tocar nada.
+COPY default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
+
+ENV BACKEND_URL=http://backend:8080 \
+    DNS_RESOLVER=127.0.0.11
 
 EXPOSE 80
 
