@@ -1,0 +1,40 @@
+server {
+    listen 80;
+    server_name localhost;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # La SPA no utiliza React Router, pero cualquier ruta desconocida
+    # debe seguir devolviendo index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # La dirección del backend y el DNS NO están escritos en la imagen: llegan por variables
+    # de entorno cuando arranca el contenedor (la imagen de nginx reemplaza las variables que
+    # van entre llaves en los archivos de /etc/nginx/templates/). Así la MISMA imagen sirve en QA y en PROD,
+    # cada una hablando con su propia api.
+    #   - en Docker Compose: el nombre del servicio (backend) y el DNS interno de Docker
+    #   - en la nube: la URL pública de la api de ese entorno y un DNS público
+    resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+    set $backend_api ${BACKEND_URL};
+
+    # Las llamadas a la API se redirigen al backend de ESTE entorno.
+    # No se reenvía el encabezado Host del navegador: nginx usa por defecto el host del
+    # backend, que es lo que necesita la nube para saber a qué servicio entregar el pedido.
+    location /api/ {
+        proxy_pass $backend_api;
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;   # la api en la nube es https: sin esto el TLS no sabe a qué host va
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Healthcheck del backend, útil para comprobaciones desde el navegador.
+    location /health {
+        proxy_pass $backend_api;
+        proxy_ssl_server_name on;
+    }
+}
