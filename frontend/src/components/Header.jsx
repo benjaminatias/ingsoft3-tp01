@@ -2,8 +2,8 @@ export default function Header({ usuario, onCerrarSesion }) {
   return (
     <header className="encabezado">
       <div className="encabezado-titulo">
-        <h1>Mis Pelicluas</h1>
-        <p>Colección personal: registrá, puntuá y filtrá tus películas.</p>
+        <h1>Mis Películas</h1>
+        <p>Tu colección personal: registrá, puntuá y filtrá tus películas.</p>
       </div>
 
       {usuario && (
