@@ -1,5 +1,21 @@
 # decisiones.md
 
+## Enlaces de este TP (TP6)
+
+**Paquetes públicos** (se bajan con `docker pull` sin credenciales; los dos etiquetados con el commit del merge `17fa23dc4b74368d2f5c3a97ee8e108d767618f8`):
+- Backend: https://github.com/users/benjaminatias/packages/container/package/ingsoft3-tp01-backend
+- Frontend: https://github.com/users/benjaminatias/packages/container/package/ingsoft3-tp01-frontend
+
+**La cadena que prueba que el registry es confiable** (corridas del PR «Publicacion de imagen»):
+- Job del PR con los tests en verde, donde «Entrar al registry» aparece salteado: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39061871417/job/117481315673
+- Lista de pasos de la corrida de `main`, donde «Construir y publicar la imagen del backend» es el último paso: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39062370300/job/117482789211
+
+**Entornos vivos hasta la defensa:**
+- QA: https://peliculas-front-qa.onrender.com (api: https://peliculas-api-qa.onrender.com)
+- PROD: https://peliculas-front-prod.onrender.com (api: https://peliculas-api-prod.onrender.com)
+
+Nota: la app tiene dos Dockerfiles (backend y frontend), así que se publican **dos paquetes**.
+
 ## TP1 — Git colaborativo
 
 ### 1. Por qué Git no pudo resolver el conflicto solo
@@ -421,3 +437,86 @@ para ver el resumen de cobertura y los artefactos, y comprobé en los Pull Reque
 aparecieran como *Required* con el merge bloqueado cuando correspondía. Además, Claude comprobó
 que los tests detectan cambios invirtiendo reglas en una copia del código (un test se puso en rojo
 en cada caso). El caso que **no** está cubierto es el del punto 7.
+
+
+## TP6 — CD: environments, aprobaciones y deployment patterns
+
+### 1. Por qué el artefacto se publica solo con la verificación en verde
+
+La imagen se publica en `ghcr.io`, etiquetada con el commit que la produjo (`sha-<commit>`), y solo cuando el cambio entra a `main`. Lo que garantiza que lo publicado es lo que pasó la verificación son **tres eslabones encadenados**, y ninguno es un control aparte que yo tenga que acordarme de mirar: nada entra a `main` sin los checks en verde (son *required*), solo `main` publica (el `push` del paso de publicar depende de `github.ref == 'refs/heads/main'`, y el login al registry solo corre en `push`), y publicar es **el último paso** del job que testea, sin `always()` ni `!cancelled()`, así que si un paso anterior falla (tests rojos, cobertura bajo el umbral) el job se corta antes de llegar. Los dos primeros eslabones se ven en la corrida de un PR, donde «Entrar al registry» aparece salteado aunque todo pasó. El tercero se ve en la lista de pasos de una corrida de `main` (links arriba).
+
+Si se publicara igual, el registry dejaría de significar «esto pasó la verificación» y pasaría a ser un depósito de lo que alguien construyó: tendría que mirar cada imagen y confiar en que alguien probó. Lo que la cadena **no** garantiza: un `docker push` hecho a mano con mis credenciales entra igual, y un tag como `sha-<commit>` es mutable (se puede volver a empujar con otro contenido). Lo que lo cerraría es desplegar por **digest** (`@sha256:...`), que identifica el contenido y no el nombre.
+
+### 2. Continuous Delivery o Continuous Deployment
+
+Implementé **Continuous Delivery**: QA se despliega solo con cada merge a `main`, pero PROD requiere una aprobación humana. Para Continuous Deployment (PROD también automático) me faltaría poder confiar en que mi pipeline detecta un cambio malo sin que yo lo mire: tests de interfaz, observabilidad (tasa de errores, métricas) y un rollback automático. Hoy mi propio caso lo muestra: el cambio con una errata en el título pasó tests y smoke en verde y solo lo detectó una persona mirando QA. Para este contexto (un equipo de una persona, una app chica, sin usuarios reales) la aprobación humana cuesta un minuto y compra una última mirada; en un equipo con muchos deploys por día y buena observabilidad, esa aprobación sería un cuello de botella y no agregaría valor.
+
+### 3. El diseño de la cadena y el alcance de cada secret
+
+La cadena completa es: PR verde → merge a `main` → `build-backend` y `build-frontend` en verde → `deploy-qa` → smoke de QA verde → aprobación humana → `deploy-prod` → smoke de PROD.
+
+- `deploy-qa` tiene `needs: [build-backend, build-frontend]` (sin CI verde no hay deploy) y un `if` que lo limita a `push` sobre `main`; los PRs verifican pero nunca despliegan. Su environment `qa` no tiene reglas: es automático a propósito.
+- `deploy-prod` tiene `needs: deploy-qa` (PROD solo después de QA vivo) y el environment `production`, que tiene como *required reviewer* a mí mismo, con *Prevent self-review* desactivado (soy el único del equipo). El workflow **se pausa** ahí hasta que alguien aprueba. No repite el `if`: lo hereda por `needs`. Tiene un `concurrency` con `cancel-in-progress: false`, para que dos deploys a PROD no se pisen.
+- Los jobs de deploy disparan los Deploy Hooks de Render con **`&ref=$GITHUB_SHA`**. Sin ese parámetro, un hook despliega la punta de la rama y no el commit que el pipeline acaba de verificar: con dos merges seguidos, la corrida del primero desplegaría el segundo, y entre que una corrida queda esperando aprobación y que alguien aprueba, `main` se puede mover. Con `&ref`, se aprueba un commit y se despliega ese commit.
+- **Secrets:** los de QA (`RENDER_HOOK_API_QA`, `RENDER_HOOK_FRONT_QA`) viven en el environment `qa`, y los de PROD (`RENDER_HOOK_API_PROD`, `RENDER_HOOK_FRONT_PROD`) viven **dentro del environment `production`**, no en *Repository secrets*. Eso importa porque un secret de environment solo se entrega a un job que **pasó la regla de ese environment**: si los de PROD estuvieran en el repo, cualquier job de cualquier workflow (por ejemplo uno de un PR) los podría leer sin que nadie aprobara nada, y el gate no protegería nada. Para entender qué pasa entre el merge y PROD: el merge dispara el CI, el CI en verde habilita `deploy-qa`, QA verde habilita `deploy-prod`, y ahí GitHub frena hasta mi aprobación; recién al aprobar se le entregan los secrets de PROD al job.
+
+### 4. Qué mira el aprobador antes de aprobar
+
+Antes de apretar *Approve* miro: que `deploy-qa` esté en verde y que el smoke haya pasado, **abrir QA y ver el cambio con mis ojos** (no solo el título: el detalle que distingue la versión nueva de la anterior), y que el commit de la corrida sea el que espero. Lo que **no** puedo ver: los tests y el smoke no miran textos de pantalla, ni qué versión está corriendo en realidad (ver punto 7), ni el estado de los datos de PROD, ni qué errores ve un usuario real. Me falta observabilidad para decidir mejor: un `/health` que informe el commit, una tasa de errores y logs centralizados.
+
+Mi caso real: aprobé **sin querer** el cambio con la errata (apreté *Approve* en vez de *Reject*), así que el error llegó a PROD. Eso muestra el límite de un gate humano: la decisión depende de un click y no tiene una confirmación. Lo resolví con el rollback del punto 8.
+
+**El rechazo documentado:** rechacé después ese mismo cambio (el PR #35) en el gate de `production`, con el motivo que escribí al ver QA con el título mal escrito: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39099242979/job/117596336792
+
+**El flujo completo** (QA verde, *Waiting for review*, aprobación, PROD desplegado y smoke verde) es la corrida del arreglo (PR #36): https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39101448910
+
+### 5. La letra chica del free tier y cómo la maneja el pipeline
+
+En el plan gratis de Render, una instancia **se duerme por inactividad** y el primer pedido puede tardar 50 segundos o más (arranque en frío), y el build tarda lo que tarde la caché. Neon también suspende su cómputo cuando no se usa. Para esto, el smoke test **reintenta**: 30 intentos cada 20 segundos (hasta unos 10 minutos), en lugar de un `curl` seco que daría falsos rojos. En la práctica, mis rollbacks y deploys con caché tardaron menos de un minuto, pero el primer registro de usuario en un entorno dormido falló con el mensaje genérico del front hasta que la api despertó.
+
+### 6. Qué garantía pierdo porque Render reconstruye
+
+Render **no usa la imagen que publiqué en ghcr**: al recibir el hook, clona el repo en ese commit y construye su propia imagen. La imagen que corre en QA y PROD sale del mismo commit y del mismo Dockerfile que verifiqué, pero es **otro build**: una dependencia o una imagen base que cambie entre un build y otro podría producir un resultado distinto sin que el CI lo note. Es decir, la cadena de confianza del registry se corta en el último tramo. Lo cerraría desplegando en Render la imagen ya publicada por digest, de modo que lo que corre sea byte a byte lo que se verificó.
+
+### 7. Qué prueba mi smoke test y qué no
+
+El script `scripts/smoke.sh` verifica cuatro cosas: que `/health` de la api responda (el endpoint hace ping a PostgreSQL), que un login con credenciales falsas devuelva **401** (prueba que la app consulta la tabla de usuarios; si la base estuviera inalcanzable daría 500), que el front sirva la página, y que `/health` **a través del front** responda (prueba que nginx le llega a la api de su entorno). Falla el job si no responde en el tiempo de reintentos. Lo probé con un servidor de prueba: pasa cuando todo contesta, y falla si el login da algo distinto de 401 o si nadie escucha.
+
+Lo que **no** dice es qué versión corre: si el hook se disparó pero el build nuevo todavía no terminó, el entorno viejo sigue contestando verde y el smoke da verde contra la versión anterior. Mi `deploy-qa` terminó en 36 segundos, lo que es una pista de ese riesgo. Lo resolvería haciendo que `/health` devuelva el commit y que el smoke lo compare con `$GITHUB_SHA`.
+
+### 8. Deployment pattern para una producción real y plan de rollback
+
+**Patrón elegido: blue-green.** Para esta app, con usuarios reales, usaría blue-green: dos entornos completos (el actual y el nuevo) y un router que cambia de uno al otro. Lo elijo porque el rollback es instantáneo (volver el switch) y porque mi app es chica y los contenedores son baratos, así que el costo de tener el doble de infraestructura es bajo. El riesgo es la **base de datos compartida**: las dos versiones tendrían que ser compatibles con el mismo esquema, y con `AutoMigrate` de GORM una migración que borra una columna rompería a la versión vieja. Haría falta hacer los cambios de esquema en dos pasos (agregar, después quitar). Canary sería mejor para ir validando con una parte del tráfico, pero hoy me faltan las métricas para decidir si el canary está sano (tasa de errores, latencia) y un router con tráfico ponderado; sin eso, un canary sería a ciegas.
+
+**Mi plan de rollback actual**, el que ejecuté de verdad cuando aprobé la errata, y su número medido:
+1. Identificar el último commit bueno, en la lista *Deploys* del servicio de PROD en Render (acá `d7629e6`).
+2. Cargar los Deploy Hooks de PROD en la terminal sin dejarlos a la vista (`read -rs`) y disparar los dos con `&ref=<commit bueno>`.
+3. Verificar en *Deploys* que el deploy de ese commit figure como *Live* en los dos servicios, y recargar PROD.
+
+**Tiempo medido:** disparé el rollback a las 02:21:27; Render empezó los dos deploys a las 02:21:28; la api quedó *Live* en 17,8 s (≈ 02:21:46) y el front a las 02:21:56. El rollback tardó **unos 29 segundos**, medido en el servicio más lento. Es poco porque el build estaba cacheado (sin caché serían varios minutos) y no incluye el arranque en frío del plan gratis. La lista de *Deploys* de `peliculas-front-prod` muestra las dos filas: el deploy de la errata (`1b63182`, PR #35) y debajo el de vuelta a `d7629e6`.
+
+**Lo que el rollback de código no deshace son los datos**: la base de Neon no se toca, así que lo que se haya escrito sigue escrito, y una migración que ya cambió el esquema sigue aplicada. Eso es lo que haría falta cubrir (backups, migraciones reversibles) para que el rollback fuera completo. La métrica DORA que ejercito es el **tiempo de recuperación** (*time to restore*).
+
+### 9. Qué quedó por variable y qué adentro de la imagen
+
+La dirección del backend **no está adentro de la imagen del front**. El nginx del front usa una plantilla (`frontend/default.conf.template`) que la imagen de nginx completa al arrancar con dos variables de entorno: `BACKEND_URL` (la api de ese entorno, sin barra al final) y `DNS_RESOLVER`. Los valores por defecto son los de Docker Compose, así que `docker compose up` sigue andando igual. Cada front apunta a la api de su entorno (QA con QA, PROD con PROD). Lo que queda adentro de la imagen es la aplicación compilada de React, la configuración de nginx (la estructura, no la dirección) y los puertos. Esto es lo que hace posible el TP7: el mismo build, configurado distinto por entorno. Como Render reconstruye cada servicio (punto 6), «la misma imagen» significa el mismo Dockerfile y el mismo commit configurados con variables distintas, no un único artefacto byte a byte.
+
+Las bases son distintas de verdad: creé un dato de prueba solo en `app_prod` y comprobé que en `app_qa` no aparece (1 fila en `app_prod`, 0 en `app_qa`), y después lo borré.
+
+### 10. Problemas encontrados y cómo los resolví
+
+- **Auto-Deploy estaba prendido en los cuatro servicios.** Render los crea con *On Commit*, así que el merge del PR #34 desplegó PROD por su cuenta, sin pasar por mi pipeline ni mi aprobación. Lo descubrí en la lista *Deploys* de `peliculas-front-prod` (una fila con trigger «Auto-Deploy») y lo puse en **Off** en los cuatro.
+- **El environment `production` no tenía los reviewers activados** en la primera corrida: el job corrió sin pausarse y no esperó aprobación. Activé *Required reviewers* y volví a correr.
+- **Un hook de PROD no llegó al job:** `curl` falló con `URL rejected: Malformed input`, porque la variable estaba vacía (el secret estaba mal cargado). Lo cargué de nuevo con el nombre exacto.
+- **Aprobé sin querer** el cambio con la errata: lo recuperé con el rollback del punto 8 y rechacé después con motivo (punto 4).
+- **Un servicio de Render con la URL equivocada:** creé el front de QA con un nombre que no cambié, y Render fija la URL al crear el servicio (`ingsoft3-tp01-1pct.onrender.com`), así que renombrarlo no sirve. Lo borré y lo volví a crear con el nombre correcto.
+- **Mi `main` local quedó con commits viejos** después de un *squash merge* (Git los ve como «adelantados» aunque el contenido es el mismo). Lo dejé igual a GitHub con `git reset --hard origin/main`.
+- **El registro de usuario falló en un entorno recién despertado** con el mensaje genérico del front: era el arranque en frío de la api (punto 5).
+
+### 11. Release
+
+La llegada a PROD se etiqueta como `v6.0.0` y se publica como Release de GitHub con notas; el tag marca el commit que efectivamente está corriendo en PROD, no la punta de la rama.
+
+### 12. Declaración de uso de IA
+
+Usé IA (Claude) para todo el TP6: los dos jobs de deploy del `ci.yml` y su orden, el script `smoke.sh`, la plantilla de nginx y los cambios de los Dockerfiles, la publicación de imágenes a `ghcr.io`, y la guía paso a paso de la configuración de Neon y Render y de los environments de GitHub. También los dos cambios de demostración del gate (el que lleva la errata en el título y el que la corrige) los armó Claude, y el comentario del rechazo lo redacté a partir de un borrador suyo. Lo verifiqué así: ejecuté cada paso yo mismo, comprobé en Render las tres cosas que se revisan (Auto-Deploy en Off en los cuatro servicios, que cada hook dispare su servicio, y que las bases sean distintas con el dato de prueba), probé el gate con un rechazo y una aprobación reales, e hice un rollback real y cronometrado. Puedo explicar qué pasa entre el merge y PROD: cada compuerta está descripta en el punto 3.
