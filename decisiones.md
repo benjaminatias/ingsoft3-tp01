@@ -1,5 +1,27 @@
 # decisiones.md
 
+## Enlaces del TP7
+
+**Paquetes públicos** (los mismos del TP6, ahora con consumidor: los cuatro servicios de Render ejecutan estas imágenes; se bajan con `docker pull` sin credenciales y cada imagen lleva una sola etiqueta, la de su commit):
+- Backend: https://github.com/users/benjaminatias/packages/container/package/ingsoft3-tp01-backend
+- Frontend: https://github.com/users/benjaminatias/packages/container/package/ingsoft3-tp01-frontend
+- Etiqueta de la imagen que rompió la app (corrida roja): `sha-431e81a8444a68b6b0075ca83ea9552f22fe32ce`
+- Etiqueta de la imagen del arreglo, la que llegó a PROD (corrida verde): `sha-da5e68c3a68c9b343a18b8a8f138851da9c5ddf3`
+
+**La corrida donde la integración quedó VERDE y la e2e ROJA** (frenó la promoción; `deploy-prod` ni arrancó):
+- Commit que rompió la app (cambia el texto del botón de alta en el front, sin tocar `e2e/`): https://github.com/benjaminatias/ingsoft3-tp01/commit/431e81a8444a68b6b0075ca83ea9552f22fe32ce
+- Corrida: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39332337445 (la e2e en rojo: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39332337445/job/118334101292)
+- Reporte de integración (verde): https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39332337445/artifacts/12224504300
+- Reporte e2e (rojo, con captura y traza): https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39332337445/artifacts/12225237058
+
+**La corrida completa en verde hasta PROD**, después del arreglo (`build → deploy-qa → integracion → e2e → aprobación → deploy-prod`):
+- Corrida: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39334390495 (el deploy a PROD: https://github.com/benjaminatias/ingsoft3-tp01/actions/runs/39334390495/job/118341046850)
+- Commit del arreglo: https://github.com/benjaminatias/ingsoft3-tp01/commit/da5e68c3a68c9b343a18b8a8f138851da9c5ddf3
+
+**Entornos vivos hasta la defensa** (los *Events* de cada servicio de Render no se pueden linkear: los muestro en vivo):
+- QA: https://peliculas-front-qa.onrender.com (api: https://peliculas-api-qa.onrender.com)
+- PROD: https://peliculas-front-prod.onrender.com (api: https://peliculas-api-prod.onrender.com)
+
 ## Enlaces de este TP (TP6)
 
 **Paquetes públicos** (se bajan con `docker pull` sin credenciales; los dos etiquetados con el commit del merge `17fa23dc4b74368d2f5c3a97ee8e108d767618f8`):
@@ -520,3 +542,97 @@ La llegada a PROD se etiqueta como `v6.0.0` y se publica como Release de GitHub 
 ### 12. Declaración de uso de IA
 
 Usé IA (Claude) para todo el TP6: los dos jobs de deploy del `ci.yml` y su orden, el script `smoke.sh`, la plantilla de nginx y los cambios de los Dockerfiles, la publicación de imágenes a `ghcr.io`, y la guía paso a paso de la configuración de Neon y Render y de los environments de GitHub. También los dos cambios de demostración del gate (el que lleva la errata en el título y el que la corrige) los armó Claude, y el comentario del rechazo lo redacté a partir de un borrador suyo. Lo verifiqué así: ejecuté cada paso yo mismo, comprobé en Render las tres cosas que se revisan (Auto-Deploy en Off en los cuatro servicios, que cada hook dispare su servicio, y que las bases sean distintas con el dato de prueba), probé el gate con un rechazo y una aprobación reales, e hice un rollback real y cronometrado. Puedo explicar qué pasa entre el merge y PROD: cada compuerta está descripta en el punto 3.
+
+
+## TP7 — Contenedores en el pipeline + pruebas de integración y e2e
+
+### 1. Build once, deploy many: qué problema del TP6 resuelve
+
+En el TP6, mi pipeline promovía un **commit**, y cada entorno lo **reconstruía**: Render clonaba el repo y volvía a compilar. Lo que corría en QA no era lo que habían probado mis tests, sino otra construcción del mismo código, y la de PROD era una tercera, hecha a otra hora. Con mi propio código el riesgo es concreto: la imagen final del backend parte de `alpine:3.20` y hace `apk add ca-certificates`, y el front usa `nginx:1.27-alpine`. Esas etiquetas de imagen base y los paquetes de Alpine se resuelven **en el momento del build**, así que dos builds del mismo commit hechos con días de diferencia pueden no ser idénticos, y yo no tendría cómo demostrarlo.
+
+La solución es la imagen. El pipeline la construye **una sola vez**, ya con todo adentro, la publica en el registry, y los entornos **ejecutan esa misma imagen**: QA y PROD corren el mismo binario. Promover pasa a ser decirle a PROD «ejecutá la imagen `X`», la misma `X` que QA y las pruebas verificaron, y volver atrás es ejecutar la anterior, que sigue intacta en el registry.
+
+### 2. Mi estrategia de etiquetas
+
+- **En el registry:** cada imagen lleva una sola etiqueta, `sha-<commit>`, con los 40 caracteres del commit de `main` que la produjo. Garantiza **trazabilidad exacta**: de qué commit salió. No garantiza inmutabilidad: una etiqueta se puede volver a publicar con otro contenido (por ejemplo, volver a correr la corrida de un commit republica el mismo `sha-…`). Lo único que nadie puede mover es el **digest** (`@sha256:…`), la huella del contenido. Los vi al hacer el `docker pull`; el hook de Render también acepta un digest en lugar del tag, y esa sería la garantía completa.
+- **En git:** `v7.0.0` es el **nombre** de una versión que sé que anduvo en PROD. Es el catálogo de versiones: de ahí llego al commit y del commit a la imagen.
+- **Por qué mi pipeline no publica `latest`:** `latest` es un puntero que se mueve con cada merge y no dice qué contenido hay detrás. Si algún deploy lo nombrara, ejecutaría «lo último que se publicó» haya pasado las pruebas o no, y después no podría decir qué desplegué. Con una sola etiqueta por imagen, la de su commit, no hay forma de desplegar algo sin decir exactamente qué es.
+- **Con qué imagen configuré los servicios de Render, y por qué no es ésa la que corre:** a los cuatro servicios les puse como fuente *Existing Image* con la imagen de un merge viejo (`sha-437f49d…`, el último de `main` cuando los cambié). Render pide la dirección de una imagen para cambiar la fuente y esa era una que ya había comprobado que existía y era pública. Lo que corre en cada entorno lo decide después cada deploy de mi pipeline, con su `imgURL`: *Settings → Image* queda clavado en la primera y no se actualiza. Por eso *Manual Deploy* es peligroso: despliega la imagen de *Settings*, no la que está corriendo, y puede llevar PROD para atrás sin avisar.
+- **Servicios nuevos o viejos:** no creé servicios nuevos; **le cambié la fuente a los cuatro existentes**. Así conservé las URLs, las variables de entorno, los deploy hooks y el historial. No hay servicios viejos que borrar.
+
+### 3. De la release a la imagen, en un paso
+
+Del tag `v7.0.0` al commit: `git rev-list -n1 v7.0.0`. Ese commit es el de la release, y mi pipeline ya publicó las dos imágenes de ese commit con su nombre, `sha-<commit>`: la del backend y la del frontend llevan la misma etiqueta. Basta abrir la release en GitHub, ver a qué commit apunta, y buscar esa etiqueta en los dos paquetes. Volver a esa versión sería mandarle esa imagen al hook de cada servicio.
+
+### 4. Cómo compruebo, desde afuera, que un entorno ejecuta mi imagen
+
+En los *Events* de cada servicio de Render, el deploy dice «Triggered via Deploy Hook» y nombra el `sha-<commit>` de esa corrida, y esa misma etiqueta existe en mis dos paquetes. Lo comprobé en los **cuatro** servicios (api y front, en QA y en PROD). Un deploy hecho a mano desde el panel no diría «Triggered via Deploy Hook» y no habría corrida que lo respalde. Además, el `docker pull` de cada imagen por su etiqueta funciona desde cualquier máquina sin credenciales.
+
+**Lo que mi smoke no alcanza a probar:** solo pregunta si el entorno **responde**. Si el deploy falla, el servicio sigue sirviendo la versión anterior y contesta igual: el smoke da verde contra la versión vieja. En mi corrida roja, `deploy-qa` terminó en 12 segundos, una pista de que el smoke contestó mientras la imagen nueva todavía se estaba desplegando. Se cerraría haciendo que el `/health` de la api devuelva el commit con el que se construyó la imagen (un `ARG` en el Dockerfile) y que el smoke lo compare con el commit de la corrida. Es el paso siguiente; en este TP no lo implementé.
+
+### 5. Qué flujos elegí, y qué NO puse en cada suite
+
+Mi app tiene login, y las películas y géneros requieren sesión. Las dos suites usan una **cuenta de pruebas única** en QA (`bot-e2e@ejemplo.test`), que el propio test crea por la api si no existe, en vez de una cuenta por corrida, porque los usuarios no se pueden borrar y se acumularían.
+
+**Integración** (`frontend/e2e/api.spec.js`, sin navegador, contra la api de QA, con la base de verdad):
+- *El alta guarda y el borrado saca.* Crea una película con título único (con la hora adentro), comprueba que la base la devuelve, la borra y comprueba que ya no está. Si falla, el alta o el borrado no llegan a la base.
+- *Título vacío:* la api responde 400 con su mensaje y no se creó nada. Si falla, la api aceptó un dato inválido.
+- *La tercera, elegida por mí: un género con películas no se puede borrar.* Responde 409 y el género sigue existiendo, y recién sin películas se puede borrar. La elegí porque la regla vive en una **consulta a la base** que un doble no ve, y porque si se rompe, la gente pierde la relación entre películas y géneros sin enterarse. Para comprobar que atrapa de verdad, se rompió a propósito esa regla en una copia del backend (con ayuda de Claude) y la prueba se puso roja.
+- Cada prueba borra lo que crea, comprobándolo, aunque falle una aserción.
+
+**e2e** (`frontend/e2e/peliculas.spec.js`, Playwright con un navegador real, contra el front de QA):
+- *Crear una película la muestra en la lista, y eliminarla la saca.* Llena el formulario, la ve en la tabla con su título único, la elimina con la confirmación y comprueba que desapareció.
+- *Un año imposible muestra el error y no crea nada.* Escribe el año 1500, ve el mensaje y, tras recargar la página, la base no tiene esa película.
+- *Iniciar sesión muestra la colección y cerrar sesión vuelve al acceso.* Es el flujo que mi usuario hace todos los días: si mañana no anda, me escriben. Toca la base (el login consulta el usuario).
+
+**Qué NO puse:** en las e2e no repetí las reglas de validación campo por campo (eso lo cubren los unitarios del TP5 y la integración), ni los flujos de editar, filtrar o puntuar: son caros, pocos y se pueden romper por motivos que no son del código. En la integración no puse listados con filtros, errores de autenticación ni estadísticas: cada capa verifica lo suyo. Los flujos que ninguna de las dos recorre quedan sin red final.
+
+### 6. Qué probás en integración y qué en e2e, y el par verde/rojo
+
+La integración le habla a la api directo y comprueba que **la api y su base se entienden**: lo que la base guarda, rechaza y devuelve. La e2e comprueba que **una persona puede usar la app** completa, y por eso ve el front. No son lo mismo: una e2e verde no me dice que la api esté bien por dentro, y una integración verde no me dice que la pantalla use bien esa api.
+
+**El diagnóstico de mi corrida roja.** En la corrida del commit que rompió la app (cambié el texto del botón de alta en el front), el smoke test dio verde, la integración dio verde y la e2e dio roja, y `deploy-prod` no arrancó: no llegó a pedir aprobación.
+
+Ese par de colores dice quién se rompió sin abrir el código. La integración le habla a la api de QA directo, con los nombres correctos de los campos, y la base guardó y borró sin problemas: la api y la base están sanas. El smoke también dio verde porque solo pregunta si la api, la base y el front responden. Lo único que falló es un navegador usando la app como una persona, y eso apunta al front: algo de lo que ve el usuario cambió. Es la fila de la tabla de la guía en la que la integración pasa y la e2e no: la rotura está en cómo el front usa la api o en lo que muestra, no en la api.
+
+Con los reportes lo confirmé: el reporte de integración tiene los 3 tests en verde, y el de e2e muestra los tests que usan el formulario de alta fallando porque no encuentran el botón «Agregar película» (con la captura y la traza del reintento). El test de iniciar y cerrar sesión no depende de ese botón.
+
+Si hubiera roto la api en lugar del front, la integración se habría puesto roja y la e2e ni siquiera habría corrido, porque su `needs` no se cumple: eso también es información, y habría apuntado directo a la api.
+
+**Lo que el gate evitó:** que PROD recibiera una versión en la que la gente ya no puede agregar películas con el flujo que probamos, sin que nadie lo notara, porque el smoke y los unitarios daban verde.
+
+**Lo que mi gate no ataja:** un bug en un flujo que ninguna de mis 3 e2e recorre (editar, filtrar, puntuar), un error que aparece solo con datos o volumen reales, o un problema visual que no cambia ningún texto ni botón que el test busque.
+
+La rotura la provoqué **en la aplicación** (el texto del botón de alta en `FormularioPelicula.jsx`), sin tocar nada de `e2e/`, y elegí una que ningún unitario ataja (no testeo componentes). El arreglo restauró el texto y la cadena completa quedó verde hasta PROD.
+
+### 7. Por qué mi integración es la amplia y no la estrecha
+
+Mi integración le habla a la **api ya desplegada en QA**, con su base de verdad, en vez de armar la api dentro del pipeline con una base descartable. **Qué gano:** casi nada de configuración (no necesito un Postgres como servicio del job ni una forma de levantar la api en memoria), y además comprueba que el **despliegue** quedó bien: ejecuta la imagen exacta de esa corrida en el entorno real. **Qué pierdo:** aislamiento y velocidad de arranque. Depende de que QA esté despierto y desplegado, comparte la base con otras corridas y con la e2e, y necesita esperar al deploy. La estrecha llegaría antes, sin deploy, y con una base que nace y muere con la corrida, pero cuesta bastante más de armar.
+
+### 8. El cold start del free tier en las e2e, y los tests flaky
+
+En el plan gratis de Render, QA se duerme por inactividad y despierta lento (hasta un minuto). Mi configuración lo maneja con **tiempos largos y un solo reintento, nunca con `sleep`**: 60 segundos por test, 15 segundos por aserción y por acción (un `click` sobre un botón que no existe falla en 15 s y no en un minuto), y una espera automática a que el elemento aparezca. Además, el smoke y la integración corren antes y ya despertaron QA cuando arranca la e2e. Para que el entorno no falle en el primer pedido, hice que el front le mande un «hola» (`/health`) a su api cuando arranca el contenedor y al abrir la página, y que nginx espere hasta 120 segundos en vez de cortar.
+
+Un test **flaky** es el que a veces pasa y a veces falla sin que el código haya cambiado. Es peor que no tener test porque entrena al equipo a ignorar el rojo. Mi configuración usa `retries: 1`: si un test pasa recién en el reintento, el reporte lo marca como *flaky* aunque la corrida salga en verde, así que lo veo y lo arreglo en vez de taparlo. El resumen de cada corrida muestra pasados, fallados, flaky y salteados.
+
+### 9. Cómo logré que la misma imagen del front sirva en QA y en PROD
+
+La dirección de la api **no está dentro de la imagen del front**. El nginx del front usa una plantilla que la imagen de nginx completa al arrancar con dos variables de entorno: `BACKEND_URL` (la api de ese entorno, sin barra al final) y `DNS_RESOLVER`. Cada servicio de Render tiene sus propios valores. Lo que queda **adentro** de la imagen es la aplicación compilada de React, la estructura de la configuración de nginx y los puertos. Ahora sí es *literalmente* la misma imagen en los dos entornos: lo único que los distingue son esas variables, que es lo que hace posible promover lo mismo que se verificó.
+
+### 10. Límites conocidos de mi cadena
+
+- **QA es una sola para todas las corridas.** Con dos merges seguidos, la corrida B puede redesplegar QA mientras la integración o la e2e de la A todavía la usan, y entonces un rojo (o un verde) puede no ser de mi código. Lo reconocería mirando en *Events* de QA qué imagen está corriendo y a qué hora corrió el `deploy-qa` de la otra corrida. Lo que haría: rechazar la corrida A con el motivo y quedarme con la B, sin re-correr sus pruebas (probarían la imagen de B). La regla que sigo es **un merge por vez** mientras la cadena corre. Un equipo real lo resuelve con un entorno por corrida.
+- **El smoke contesta con la versión vieja** mientras se despliega la nueva (punto 4).
+- **El gate humano depende de un click:** en el TP6 aprobé por error un cambio con una errata. La e2e es la red que atraparía algo así antes de llegar a mí.
+
+### 11. Problemas encontrados y cómo los resolví
+
+- **Error al abrir QA por el arranque en frío:** cada vez que abría el front de QA con la api dormida, aparecía «Ocurrió un error inesperado»: nginx cortaba antes de que la api despertara y devolvía un 502 o 504 en HTML, que el front no entendía. Lo resolví con tiempos de espera largos en nginx, un «hola» a la api desde el contenedor del front y al cargar la página, y un mensaje claro para los 502, 503 y 504, con sus tests.
+- **Mi front no tenía nombres accesibles que Playwright pudiera encontrar:** los errores no tenían `role="alert"` y el botón «Eliminar» de cada fila no distinguía de qué película era. Los agregué, en vez de esquivarlo con selectores de CSS, que cambian con el diseño. Además, los campos «Año», «Género» y «Estado» están repetidos entre el formulario de alta y los filtros, y hay dos botones «Iniciar sesión» (la pestaña y el envío): acoté cada búsqueda al formulario correspondiente.
+- **Las películas requieren sesión:** las pruebas necesitaban un usuario. Creé una cuenta de pruebas única que el propio test registra por la api, o inicia sesión si ya existía.
+- **Un cambio de fuente en Render que no despliega:** cambiar la fuente a *Existing Image* no despliega nada; tuve que probar un servicio a mano con su hook antes de pasar a los otros tres, y recordar que *Manual Deploy* ya no es seguro (punto 2).
+- **Errores míos con Git:** un `git add` con rutas de la raíz estando parado en `frontend/` (`pathspec did not match`), y correr las pruebas antes de copiar los archivos de las suites (`No tests found`). Se resolvieron volviendo a la raíz y copiando los archivos.
+
+### 12. Declaración de uso de IA
+
+Usé IA (Claude) para todo el TP7: los jobs de deploy con `imgURL`, los jobs `integracion` y `e2e` y el gate, las dos suites de Playwright (`api.spec.js` y `peliculas.spec.js`) y su configuración, los cambios de accesibilidad del front, el arreglo del arranque en frío, el cambio que rompió la aplicación a propósito y su arreglo, y el borrador del diagnóstico del punto 6, que corregí con lo que vi en la corrida. Lo verifiqué así: corrí las dos suites contra mi `docker compose` local antes de subirlas (3 de integración y 3 de e2e en verde), comprobé en *Actions* la cadena completa (la pausa de revisión y quién aprobó), vi la corrida roja con la integración verde y `deploy-prod` sin arrancar, miré en los *Events* de los cuatro servicios el deploy por hook con la etiqueta `sha-` de la corrida, y comprobé que mis pruebas detectan cambios (Claude rompió a propósito una regla del backend en una copia y la prueba correspondiente se puso roja). Puedo explicar qué verifica cada test (punto 5), contra qué entorno corre (la integración contra la api de QA y la e2e contra el front de QA) y qué pasa si falla: la integración roja frena todo y la e2e ni corre, y si la e2e queda roja, `deploy-prod` no pide aprobación.
