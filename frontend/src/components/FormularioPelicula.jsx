@@ -135,7 +135,7 @@ export default function FormularioPelicula({ generos, peliculaEditando, onGuarda
 
         <div className="acciones-formulario">
           <button type="submit" className="boton boton-primario" disabled={enviando}>
-            {peliculaEditando ? 'Guardar cambios' : 'Guardar película'}
+            {peliculaEditando ? 'Guardar cambios' : 'Agregar película'}
           </button>
           {peliculaEditando && (
             <button type="button" className="boton" onClick={onCancelar}>
