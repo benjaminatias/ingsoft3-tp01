@@ -131,7 +131,7 @@ export default function FormularioPelicula({ generos, peliculaEditando, onGuarda
           />
         </div>
 
-        {error && <p className="mensaje mensaje-error">{error}</p>}
+        {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
 
         <div className="acciones-formulario">
           <button type="submit" className="boton boton-primario" disabled={enviando}>

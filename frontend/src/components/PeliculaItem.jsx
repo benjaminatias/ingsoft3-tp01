@@ -82,7 +82,12 @@ export default function PeliculaItem({ pelicula, onCambiarEstado, onPuntuar, onE
         <button type="button" className="boton boton-pequeno" onClick={() => onEditar(pelicula)}>
           Editar
         </button>
-        <button type="button" className="boton boton-pequeno boton-peligro" onClick={() => onEliminar(pelicula)}>
+        <button
+          type="button"
+          className="boton boton-pequeno boton-peligro"
+          aria-label={`Eliminar ${pelicula.titulo}`}
+          onClick={() => onEliminar(pelicula)}
+        >
           Eliminar
         </button>
       </td>
