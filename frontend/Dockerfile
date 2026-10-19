@@ -24,6 +24,8 @@ FROM nginx:1.27-alpine
 # ${BACKEND_URL} y ${DNS_RESOLVER} por los valores del entorno. Los valores por defecto son
 # los de Docker Compose, así que `docker compose up` sigue andando sin tocar nada.
 COPY default.conf.template /etc/nginx/templates/default.conf.template
+# Un «hola» a la API al arrancar el contenedor (la imagen de nginx corre /docker-entrypoint.d/*.sh).
+COPY --chmod=755 40-despertar-api.sh /docker-entrypoint.d/40-despertar-api.sh
 COPY --from=build /app/dist /usr/share/nginx/html
 
 ENV BACKEND_URL=http://backend:8080 \

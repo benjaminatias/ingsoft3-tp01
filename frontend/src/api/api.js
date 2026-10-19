@@ -38,6 +38,16 @@ export function configurarExpiracionSesion(callback) {
   alExpirarSesion = callback
 }
 
+// Errores que devuelve el proxy (nginx o la plataforma) cuando el backend todavía no contestó.
+// En el plan gratis de Render el backend se duerme por inactividad y tarda en despertar.
+const ESTADOS_SERVIDOR_DORMIDO = [502, 503, 504]
+
+// Despierta el backend apenas se abre la página, sin esperar a que la persona haga algo:
+// mientras escribe su email, el servidor ya está arrancando. Si falla, no importa.
+export function despertarServidor() {
+  return fetch('/health', { cache: 'no-store' }).catch(() => {})
+}
+
 async function peticion(ruta, opciones = {}) {
   const token = obtenerToken()
   const cabeceras = { 'Content-Type': 'application/json', ...(opciones.headers || {}) }
@@ -73,7 +83,11 @@ async function peticion(ruta, opciones = {}) {
   }
 
   if (!respuesta.ok) {
-    const error = new Error((datos && datos.error) || 'Ocurrió un error inesperado.')
+    const dormido = ESTADOS_SERVIDOR_DORMIDO.includes(respuesta.status)
+    const mensajeBase = dormido
+      ? 'El servidor se está despertando. Esperá unos segundos y probá de nuevo.'
+      : 'Ocurrió un error inesperado.'
+    const error = new Error((datos && datos.error) || mensajeBase)
     error.status = respuesta.status
     throw error
   }
