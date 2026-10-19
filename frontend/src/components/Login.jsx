@@ -143,7 +143,7 @@ export default function Login({ onAutenticado, aviso }) {
             </div>
           )}
 
-          {error && <p className="mensaje mensaje-error">{error}</p>}
+          {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
 
           <button type="submit" className="boton boton-primario boton-ancho" disabled={enviando}>
             {enviando

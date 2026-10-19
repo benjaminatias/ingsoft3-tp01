@@ -23,3 +23,7 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+# Playwright: se generan en cada corrida, no se commitean
+playwright-report/
+test-results/
+playwright-results.json
