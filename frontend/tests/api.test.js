@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   borrarToken,
   configurarExpiracionSesion,
+  despertarServidor,
   guardarToken,
   iniciarSesion,
   obtenerPeliculas
@@ -100,6 +101,16 @@ describe('errores de la API', () => {
     await expect(obtenerPeliculas()).rejects.toMatchObject({ message: mensaje, status })
   })
 
+  // El proxy contesta con HTML (no JSON) cuando el backend todavía está arrancando.
+  it.each([502, 503, 504])('el status %i (servidor dormido) pide esperar y reintentar', async (status) => {
+    fetchFalso.mockResolvedValue({ status, ok: false, json: async () => { throw new Error('es HTML') } })
+
+    await expect(obtenerPeliculas()).rejects.toMatchObject({
+      message: 'El servidor se está despertando. Esperá unos segundos y probá de nuevo.',
+      status
+    })
+  })
+
   it('usa un mensaje genérico si el error no trae cuerpo', async () => {
     fetchFalso.mockResolvedValue({ status: 500, ok: false, json: async () => { throw new Error('no es json') } })
 
@@ -140,5 +151,21 @@ describe('expiración de la sesión', () => {
     )
 
     expect(alExpirar).not.toHaveBeenCalled()
+  })
+})
+
+describe('despertar el servidor', () => {
+  it('le pega a /health sin cache para que el backend arranque', async () => {
+    fetchFalso.mockResolvedValue(respuestaFalsa(200, { status: 'healthy' }))
+
+    await despertarServidor()
+
+    expect(fetchFalso).toHaveBeenCalledWith('/health', { cache: 'no-store' })
+  })
+
+  it('no rompe la página si el servidor todavía no contesta', async () => {
+    fetchFalso.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(despertarServidor()).resolves.toBeUndefined()
   })
 })
