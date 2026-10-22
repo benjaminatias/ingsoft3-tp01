@@ -636,3 +636,31 @@ La dirección de la api **no está dentro de la imagen del front**. El nginx del
 ### 12. Declaración de uso de IA
 
 Usé IA (Claude) para todo el TP7: los jobs de deploy con `imgURL`, los jobs `integracion` y `e2e` y el gate, las dos suites de Playwright (`api.spec.js` y `peliculas.spec.js`) y su configuración, los cambios de accesibilidad del front, el arreglo del arranque en frío, el cambio que rompió la aplicación a propósito y su arreglo, y el borrador del diagnóstico del punto 6, que corregí con lo que vi en la corrida. Lo verifiqué así: corrí las dos suites contra mi `docker compose` local antes de subirlas (3 de integración y 3 de e2e en verde), comprobé en *Actions* la cadena completa (la pausa de revisión y quién aprobó), vi la corrida roja con la integración verde y `deploy-prod` sin arrancar, miré en los *Events* de los cuatro servicios el deploy por hook con la etiqueta `sha-` de la corrida, y comprobé que mis pruebas detectan cambios (Claude rompió a propósito una regla del backend en una copia y la prueba correspondiente se puso roja). Puedo explicar qué verifica cada test (punto 5), contra qué entorno corre (la integración contra la api de QA y la e2e contra el front de QA) y qué pasa si falla: la integración roja frena todo y la e2e ni corre, y si la e2e queda roja, `deploy-prod` no pide aprobación.
+
+## TP8 — Infraestructura como código: `preprod` declarado en `infra/`
+
+### 1. Riel elegido y versiones fijadas
+
+Elegí el riel **Terraform + Neon + Render**, el mismo de mi QA y producción desde el TP6, así que no necesité cuentas nuevas. Usé Terraform **v1.16.6** (no OpenTofu). Los providers están fijados por versión en `infra/main.tf`, y el `.terraform.lock.hcl` fija además los hashes exactos:
+
+- `kislerdm/neon` **0.18.0** (su repositorio está archivado: el oficial saldrá con otro nombre de fuente, y ese día el ejercicio es cambiar el `source` y correr `terraform init -upgrade`),
+- `render-oss/render` **1.9.1**,
+- `hashicorp/random` **3.9.1**, que agregué yo: la guía no lo usa.
+
+Declaré un entorno **nuevo**, `preprod`, y no toqué QA ni producción: ni los importé ni los modifiqué. Un proyecto de Neon propio (`peliculas-preprod`) con su rol y su base, y dos servicios de Render (`peliculas-api-preprod` y `peliculas-front-preprod`) que corren las **imágenes de mi TP7**, la del commit de la release `v7.0.0`. Elegí un entorno nuevo porque se puede **destruir entero** sin rozar nada de lo que ya tengo y porque Render no deja modificar un servicio del plan gratuito: acá se crea y se destruye, no se edita.
+
+Ninguna credencial está escrita en el código: los providers leen `NEON_API_KEY`, `RENDER_API_KEY` y `RENDER_OWNER_ID` del entorno, y el id de mi organización de Neon entra por `TF_VAR_neon_org_id`. La conexión **se deriva, no se copia**: `DB_HOST`, `DB_USER`, `DB_PASSWORD` y `DB_NAME` de mi api salen de lo que devolvió Neon, y el `BACKEND_URL` del front sale de la URL de su propia api. El `JWT_SECRET` lo genera Terraform con `random_password` (queda solo en el estado, que no se versiona); lo haría distinto con un gestor de secretos. El estado vive en mi máquina y está cubierto por el `.gitignore` desde antes del primer `apply`; el `.terraform.lock.hcl` sí se commitea.
+
+Lo comprobé como entorno y no como recursos: el `/health` de la api, un login de prueba que toca la tabla de usuarios, y el front cargando y llegando a su propia api (el mismo smoke del pipeline). Lo que sigue siendo artesanal en mi cuenta: QA y producción, que cliqueé a mano y ningún plan mío ve (un `plan` limpio no dice nada sobre ellos), y los deploy hooks de Render, que se copian del panel.
+
+### 2. Problemas que tuve y cómo los resolví
+
+- **Instalar Terraform con Chocolatey falló por permisos** (`Acceso denegado a C:\ProgramData\chocolatey`): la terminal no era de administrador. Lo resolví y quedó instalada la v1.16.6.
+- **El primer `apply` falló con HTTP 400 `org_id is required`.** Neon ahora exige la organización dueña de cada proyecto, y mi código no la declaraba. Agregué `org_id` al proyecto, con una variable sin valor por defecto que se pasa por el entorno. Después del error, el `plan` siguiente no volvió a crear la contraseña que ya existía: Terraform retomó donde había quedado gracias al estado.
+- **El segundo `apply` falló en Render: `invalid ownerID`.** Había cargado como `RENDER_OWNER_ID` el id de la URL del panel, que es el de mi usuario. Render pide el del workspace; el correcto lo saqué de su API (`/v1/owners`). Esa vez Neon ya había creado sus recursos y solo faltaban los dos servicios.
+- **Hallazgos que la guía dice que la cátedra no midió:** al recrear los servicios de Render con el mismo nombre, volvieron **las mismas URLs**, sin sufijo; y en cambio el **host de la base de Neon cambió** (el proyecto nuevo trae su propio endpoint), y mi api de preprod apuntó sola a la base nueva, porque ese valor se deriva y no está escrito en ningún lado.
+- **`prevent_destroy`:** probé la protección con preprod vivo y el `destroy` se negó (`Instance cannot be destroyed`) antes de pedir confirmación. La saqué después, porque preprod tiene que poder morir.
+
+### 3. Declaración de uso de IA
+
+Usé IA (Claude) para el TP8: el código de `infra/` (providers, recursos, variables y salidas, adaptados a las variables de mi backend en Go), el `.gitignore` con las reglas de Terraform y la guía de cada paso. Claude lo validó con OpenTofu contra el esquema real de los providers (formato y validación); el `plan` y el `apply` los corrí yo contra mis cuentas, no se probaron antes. Lo verifiqué así: leí el plan antes de aplicar, comprobé idempotencia (el segundo `plan` dijo «No changes»), abrí el estado y encontré la contraseña en texto plano, provoqué drift (borré la base a mano y el plan lo detectó y el `apply` la reparó; creé una base que mi código no declara y el plan no la vio), hice el ciclo `destroy` → `apply` mirando el orden inverso de la ejecución, y comprobé en las consolas de Neon y Render que mi QA y mi producción no se tocaron. Puedo leer un plan en voz alta y explicar qué haría cada acción, de dónde se derivan la conexión y la dirección del backend, y por qué el estado no está en el repositorio.
