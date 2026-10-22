@@ -27,3 +27,12 @@ Thumbs.db
 playwright-report/
 test-results/
 playwright-results.json
+
+# Terraform (TP8): el estado trae contraseñas en texto plano y no se versiona.
+# El .terraform.lock.hcl SI se commitea.
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+crash.log
+crash.*.log
