@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"             # las dependencias del backend (Go)
+    directory: "/backend"                  # donde está el go.mod
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"               # las del frontend (React + Playwright + vitest)
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"    # las actions de tu pipeline también son dependencias
+    directory: "/"
+    schedule:
+      interval: "weekly"
