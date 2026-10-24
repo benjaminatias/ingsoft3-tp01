@@ -52,12 +52,6 @@ func RegistrarRutas(router *gin.Engine, h *Handler) {
 	// y un endpoint que solo contesta GET le respondería 404 aunque la app esté viva.
 	router.Match([]string{http.MethodGet, http.MethodHead}, "/health", h.Health)
 
-	// TEMPORAL (TP9): un endpoint que falla a propósito para ver un error llegar a Sentry.
-	// Se saca al terminar el práctico.
-	router.GET("/api/falla", func(c *gin.Context) {
-		panic("Falla de prueba del TP9")
-	})
-
 	api := router.Group("/api")
 
 	// Rutas públicas: registrarse e iniciar sesión.
