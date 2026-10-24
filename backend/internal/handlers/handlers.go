@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -47,7 +48,15 @@ func leerID(c *gin.Context) (uint, bool) {
 
 // RegistrarRutas registra todas las rutas de la API en el router de Gin.
 func RegistrarRutas(router *gin.Engine, h *Handler) {
-	router.GET("/health", h.Health)
+	// GET y también HEAD: el monitor externo (plan gratuito de UptimeRobot) pregunta con HEAD,
+	// y un endpoint que solo contesta GET le respondería 404 aunque la app esté viva.
+	router.Match([]string{http.MethodGet, http.MethodHead}, "/health", h.Health)
+
+	// TEMPORAL (TP9): un endpoint que falla a propósito para ver un error llegar a Sentry.
+	// Se saca al terminar el práctico.
+	router.GET("/api/falla", func(c *gin.Context) {
+		panic("Falla de prueba del TP9")
+	})
 
 	api := router.Group("/api")
 
@@ -88,6 +97,9 @@ func NuevoRouter(db *gorm.DB) *gin.Engine {
 func NuevoRouterCon(h *Handler) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
+	// Sentry: cuenta los errores y mide cuánto tarda cada pedido. Con Repanic el panic se reporta y
+	// sigue su camino hasta Recovery, que responde 500. Si Sentry no está iniciado, no hace nada.
+	router.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 	RegistrarRutas(router, h)
 	return router
 }

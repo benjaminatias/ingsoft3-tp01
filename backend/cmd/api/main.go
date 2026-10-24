@@ -4,7 +4,9 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 
 	"gestor-peliculas/internal/database"
@@ -12,6 +14,17 @@ import (
 )
 
 func main() {
+	// 0. Sentry: el DSN llega por el ENTORNO (SENTRY_DSN), no se escribe en el código. Si la variable
+	// no está (en mi máquina, en los tests, en QA), Sentry queda apagado y la aplicación anda igual.
+	if err := sentry.Init(sentry.ClientOptions{
+		Dsn:              os.Getenv("SENTRY_DSN"),
+		Environment:      os.Getenv("SENTRY_ENVIRONMENT"),
+		TracesSampleRate: 1.0, // medir todos los pedidos (alcanza para una aplicación de cursada)
+	}); err != nil {
+		log.Printf("No se pudo iniciar Sentry (la aplicación sigue sin él): %v", err)
+	}
+	defer sentry.Flush(2 * time.Second)
+
 	// 1. Conectarse a PostgreSQL con las variables de entorno.
 	db, err := database.Conectar()
 	if err != nil {
