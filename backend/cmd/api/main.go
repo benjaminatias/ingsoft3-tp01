@@ -17,8 +17,11 @@ func main() {
 	// 0. Sentry: el DSN llega por el ENTORNO (SENTRY_DSN), no se escribe en el código. Si la variable
 	// no está (en mi máquina, en los tests, en QA), Sentry queda apagado y la aplicación anda igual.
 	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:              os.Getenv("SENTRY_DSN"),
-		Environment:      os.Getenv("SENTRY_ENVIRONMENT"),
+		Dsn:         os.Getenv("SENTRY_DSN"),
+		Environment: os.Getenv("SENTRY_ENVIRONMENT"),
+		// En esta versión de sentry-go hacen falta LAS DOS: sin EnableTracing el SDK descarta todas las
+		// mediciones de tiempo aunque TracesSampleRate valga 1.0, y el tablero de rendimiento queda vacío.
+		EnableTracing:    true,
 		TracesSampleRate: 1.0, // medir todos los pedidos (alcanza para una aplicación de cursada)
 	}); err != nil {
 		log.Printf("No se pudo iniciar Sentry (la aplicación sigue sin él): %v", err)
