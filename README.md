@@ -24,6 +24,11 @@ Database: PostgreSQL
 Backend tests: Go testing
 Frontend tests: Vitest
 Containers: Docker + Docker Compose
+CI/CD: GitHub Actions (build, tests, coverage, imágenes en ghcr.io, QA y PROD con aprobación)
+Integración y e2e: Playwright
+Entornos: Render (servicios) + Neon (PostgreSQL)
+Infraestructura como código: Terraform (infra/)
+Seguridad y observabilidad: Dependabot, CodeQL, UptimeRobot y Sentry
 ```
 
 ## Arquitectura
@@ -49,10 +54,18 @@ PostgreSQL
 ```text
 .
 ├── README.md
+├── decisiones.md                   (decisiones y enlaces de cada TP)
+├── evidencias.md
 ├── .gitignore
 ├── .env.example
 ├── docker-compose.yml
 ├── docker-compose.registry.yml
+│
+├── .github/
+│   ├── workflows/ci.yml            (CI/CD: build, tests, coverage, imágenes, QA → e2e → PROD)
+│   └── dependabot.yml
+├── scripts/smoke.sh                (smoke test posterior al deploy)
+├── infra/                          (Terraform: entorno preprod en Neon y Render)
 │
 ├── backend/
 │   ├── cmd/api/main.go
@@ -60,18 +73,22 @@ PostgreSQL
 │   │   ├── auth/auth.go            (JWT + bcrypt)
 │   │   ├── database/database.go
 │   │   ├── models/{genero.go,pelicula.go,usuario.go}
-│   │   ├── handlers/{handlers.go,auth.go,peliculas.go,generos.go,estadisticas.go,health.go}
+│   │   ├── handlers/{handlers.go,auth.go,usuarios.go,peliculas.go,generos.go,estadisticas.go,health.go}
 │   │   └── validation/validation.go
+│   ├── scripts/cobertura.sh        (tests con coverage y umbral que rompe el build)
 │   ├── tests/
 │   ├── Dockerfile
 │   └── .dockerignore
 │
 └── frontend/
     ├── src/{api,components,utils,App.jsx,main.jsx,styles.css}
-    ├── tests/
+    ├── tests/                      (Vitest)
+    ├── e2e/                        (Playwright: integración contra la api y e2e en el navegador)
+    ├── playwright.config.js
+    ├── default.conf.template       (nginx: BACKEND_URL y DNS_RESOLVER vienen del entorno)
+    ├── 40-despertar-api.sh
     ├── Dockerfile
-    ├── .dockerignore
-    └── nginx.conf
+    └── .dockerignore
 ```
 
 ---
@@ -228,6 +245,22 @@ cd frontend
 npm test -- --run
 ```
 
+Cobertura (el umbral hace fallar el comando si no se alcanza):
+
+```bash
+cd backend && COVERAGE_DIR=./coverage sh scripts/cobertura.sh   # con DB_HOST definida incluye la integración
+cd frontend && npm run test:coverage
+```
+
+Integración y e2e con Playwright (necesitan el sistema levantado, por ejemplo con `docker compose up -d --build`):
+
+```bash
+cd frontend
+npm ci && npx playwright install chromium
+API_BASE_URL=http://localhost:8080 npx playwright test e2e/api.spec.js
+E2E_BASE_URL=http://localhost:3000 npx playwright test e2e/peliculas.spec.js
+```
+
 Build:
 
 ```bash
@@ -346,7 +379,7 @@ Ejemplo de respuesta:
 | Método | Ruta                 | Descripción                                          |
 |--------|----------------------|------------------------------------------------------|
 | GET    | `/api/estadisticas`  | Total, vistas, pendientes y puntuación promedio       |
-| GET    | `/health`            | Público (lo usa Docker): 200 si la API y PostgreSQL responden, 503 si no |
+| GET, HEAD | `/health`         | Público (lo usan Docker y el monitor externo): 200 si la API y PostgreSQL responden, 503 si no |
 
 ```json
 {
@@ -382,10 +415,25 @@ pero no separa la colección por usuario ni existen roles.
 
 ---
 
+## Pipeline, entornos y operación
+
+- **CI/CD** (`.github/workflows/ci.yml`): en cada pull request se construyen las imágenes, se corren los
+  tests y el coverage con su umbral. En `main`, además, se publican las imágenes en `ghcr.io` (etiquetadas
+  con el commit), se despliegan a **QA**, corren las pruebas de integración y e2e contra QA y, con la
+  aprobación manual del environment `production`, se despliegan a **PROD**.
+- **Entornos** (planes gratuitos: el primer pedido tras un rato sin uso tarda en responder):
+  QA https://peliculas-front-qa.onrender.com · PROD https://peliculas-front-prod.onrender.com
+- **Infraestructura como código**: `infra/` declara un entorno `preprod` (Neon + Render) con Terraform.
+- **Seguridad y observabilidad**: Dependabot, CodeQL y la protección de secretos están activos en el
+  repositorio; el monitor externo y Sentry vigilan producción.
+- **Decisiones y enlaces** de cada trabajo práctico (con las corridas, los pull requests y las releases
+  que las prueban): [`decisiones.md`](decisiones.md).
+
 ## Notas
 
 - El archivo `.env` no se sube al repositorio; sí se sube `.env.example`.
-- El proyecto está preparado para agregar más adelante `.github/workflows/ci.yml`,
-  pero todavía no incluye CI/CD.
+- Las credenciales de Neon, Render y Sentry (backend) no están en el repositorio: se cargan como
+  variables de entorno o como secrets de GitHub. El DSN de Sentry del frontend sí está en el código a
+  propósito: solo sirve para enviar datos, no para leerlos.
 
 ....
