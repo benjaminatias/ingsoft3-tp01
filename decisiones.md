@@ -353,13 +353,15 @@ invierto la regla del `if` en `Registro`, ese test se pone en rojo.
 
 ### 4. Mi umbral de coverage y qué dejé afuera de la cuenta
 
-En el **backend** puse **70 % de sentencias**, y hoy da **77,3 %**. Go no tiene métrica de ramas,
+En el **backend** puse **70 % de sentencias**, y al cerrar el TP5 daba **77,3 %**. Go no tiene métrica de ramas,
 solo sentencias, así que no puedo reportar el número de rama de ese lado. En el **frontend** puse
 **80 % de líneas y 85 % de ramas**: medí 82,4 % y 87,0 %, y dejé unos 2 puntos de margen, chico a
 propósito para frenar una caída real sin fallar por ruido. Puse umbral en las dos métricas porque
 con vitest 2.1.9 una función que nadie llama suma líneas sin cubrir pero casi no mueve las ramas
-(en mi demostración las ramas quedaron en 86,4 %, arriba del umbral, y frenó por líneas). Hoy el
-frontend está en 84,7 % de líneas y 89,3 % de ramas, con los tests de `recomendaciones.js`.
+(en mi demostración las ramas quedaron en 86,4 %, arriba del umbral, y frenó por líneas). Con los tests de
+`recomendaciones.js` el frontend quedó en 84,7 % de líneas y 89,3 % de ramas (y con los tests que sumé
+en los TPs siguientes hoy mide 85,2 % y 89,6 %). En mi Windows el mismo comando da 85,1 % de líneas,
+porque v8 cuenta distinto según el sistema: el número que manda es el del pipeline, que corre en Linux.
 
 Con el 70 % me pasó algo que vale la pena contar: lo elegí mirando mi medición local (74,4 %),
 pero la primera corrida limpia en GitHub dio **69,9 %** y el paso se puso rojo por una décima.
